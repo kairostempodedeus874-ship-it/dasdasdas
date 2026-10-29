@@ -1,0 +1,85 @@
+# Fly.io — configuração do servidor de WhatsApp (Kairós)
+# ---------------------------------------------------------------
+# Este arquivo já vem com o essencial configurado:
+#   - a máquina NUNCA hiberna (auto_stop_machines = false)
+#   - 1 instância sempre ligada (min_machines_running = 1)
+#   - volume persistente em /data (a sessão do WhatsApp mora ali)
+#   - porta 8080 alinhada com a checagem de saúde do Fly
+#   - verificação de saúde tolerante, com tempo de sobra para subir
+#
+# ⚠️⚠️ NÃO COLOQUE O NOME DO APP AQUI ⚠️⚠️
+#
+#    Quando você publica por "Launch from GitHub", o Fly CRIA UM APP NOVO
+#    com nome aleatório a cada tentativa (whatss-ree4jw, fds65da, ...).
+#    Se este arquivo tiver um "app" fixo com outro nome, o Fly publica no
+#    app ERRADO e o endereço que você testa fica eternamente em
+#    "Checking https://...fly.dev ... Request failed".
+#
+#    Deixando em branco, cada publicação usa o app que o próprio Fly
+#    acabou de criar — e o endereço .fly.dev sempre bate com o que está
+#    realmente no ar.
+#
+#    Só descomente a linha do app se você publicar pelo TERMINAL:
+#      fly deploy --app NOME-DO-APP
+#
+# A REGIÃO também fica de propósito em branco: assim a máquina nasce na
+# mesma região do volume que o Fly cria junto com o app. Fixar uma região
+# diferente da do volume faz a máquina NÃO subir.
+# Se quiser fixar mesmo, use a mesma região do volume (ex.: primary_region = "ams").
+# primary_region = "ams"
+
+# app = "SEU-APP"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # 8080 é a porta que o Fly espera por padrão na checagem de saúde.
+  # O servidor também escuta na 3000 (padrão que o launcher web do Fly usa
+  # quando gera o fly.toml dele) e na 3001, como rede de segurança.
+  PORT = "8080"
+  TZ = "America/Sao_Paulo"
+  # A sessão fica DENTRO do volume montado em /data
+  WPP_AUTH_DIR = "/data/wpp-auth"
+
+# Desligamento limpo: o Fly avisa o processo (SIGTERM) e espera até 10s
+# antes de matar. Nesse tempo o servidor fecha a sessão do WhatsApp com
+# segurança — é isso que evita credencial corrompida a cada deploy.
+kill_signal = "SIGTERM"
+kill_timeout = "10s"
+
+# Cada app do Fly tem os SEUS próprios volumes. Ao criar um app novo
+# (inclusive os de nome aleatório do "Deploy from GitHub"), é obrigatório
+# criar o volume wpp_auth de novo naquele app, na MESMA região do
+# primary_region acima.
+# Sem esse volume a máquina não sobe — e o deploy até aparece "Complete".
+[[mounts]]
+  source = "wpp_auth"
+  destination = "/data"
+
+[http_service]
+  # Precisa ser a MESMA porta do PORT acima. Se ficar diferente, o log mostra
+  # "servicecheck-00-http-8080 falhou" e a máquina nunca inicia.
+  internal_port = 8080
+  force_https = true
+  # NUNCA deixar dormir: sem processo vivo a sessão do WhatsApp cai.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  # Checagem de saúde no formato oficial do Fly (dentro do http_service).
+  [[http_service.checks]]
+    method = "GET"
+    path = "/api/health"
+    interval = "30s"
+    # O endpoint responde na hora; a folga de 10s protege a máquina de ser
+    # reiniciada em loop por qualquer oscilação momentânea de rede.
+    timeout = "10s"
+    # Tempo para o Node + Baileys subirem antes da primeira checagem.
+    grace_period = "60s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  # 512 MB atende. Se o Fly reiniciar a máquina sozinho com frequência
+  # (memória estourada), troque para "1gb" — custa um pouco mais.
+  memory = "512mb"
